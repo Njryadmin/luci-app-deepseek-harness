@@ -61,17 +61,8 @@ define Package/luci-app-deepseek-harness
 		+curl \
 		+wget \
 		+ca-bundle \
-		+tar \
 		+xz \
-		+xz-utils \
-		+coreutils-stat \
-		+coreutils-sha256sum \
-		+coreutils-nohup \
-		+python3-light \
-		+!PACKAGE_luci-app-deepseek-harness_ENABLE_LUAJIT:luci \
-		+PACKAGE_luci-app-deepseek-harness_ENABLE_LUAJIT:luci-lua-runtime
-	EXTRA_DEPENDS:= \
-		+@PACKAGE_luci-app-deepseek-harness_ENABLE_LUAJIT[?luci-lua-runtime]
+		+python3-light
 	PACKAGES:=$(PKG_NAME)
 endef
 

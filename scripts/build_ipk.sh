@@ -66,10 +66,12 @@ find "$STAGING/data/etc/init.d" -type f -exec chmod 755 {} +
 find "$STAGING/data/etc/uci-defaults" -type f -exec chmod 755 {} +
 
 # 5. 写 CONTROL 字段
+# 只列 iStoreOS 24.10 上真正可安装的包
+# busybox 自带 sha256sum/stat/nohup,不需要 coreutils-* 包
 cat > "$STAGING/CONTROL/control" <<EOF
 Package: $PKG_NAME
 Version: ${VERSION}-${RELEASE}
-Depends: luci-base, lua, curl, wget, ca-bundle, tar, xz, xz-utils, coreutils-stat, coreutils-sha256sum, coreutils-nohup, python3-light
+Depends: luci-base, lua, curl, wget, ca-bundle, xz, python3-light
 License: Apache-2.0
 Section: luci
 Architecture: all
