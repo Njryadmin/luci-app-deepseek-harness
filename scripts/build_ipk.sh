@@ -78,10 +78,20 @@ cd "$STAGING"
 tar -czf "$STAGING/control.tar.gz" -C "$STAGING/CONTROL" .
 tar -czf "$STAGING/data.tar.gz" -C "$STAGING/data" .
 echo "2.0" > "$STAGING/debian-binary"
-tar -cf "$OUT" debian-binary control.tar.gz data.tar.gz
+
+# 用 Python ar 打包器(替代 tar -cf)
+# Git Bash / Windows 上 ar 命令不可用,且 GNU tar 不支持 ar 输出格式
+# 路径要转 Windows 格式给 Python,避免 Git Bash 自动转换
+if command -v cygpath >/dev/null 2>&1; then
+	AR_PACK_WIN="$(cygpath -w "$SCRIPT_DIR/ar_pack.py")"
+	OUT_WIN="$(cygpath -w "$OUT")"
+else
+	AR_PACK_WIN="$SCRIPT_DIR/ar_pack.py"
+	OUT_WIN="$OUT"
+fi
+python3 "$AR_PACK_WIN" "$OUT_WIN" \
+	debian-binary control.tar.gz data.tar.gz
 
 # 清理
 find "$STAGING" -mindepth 1 -delete 2>/dev/null || true
-
-echo "OK: $OUT"
-echo "Size: $(stat -c %s "$OUT" 2>/dev/null || stat -f %z "$OUT") bytes"
+# ar_pack.py 已经 echo OK 和 Size,这里不再重复
