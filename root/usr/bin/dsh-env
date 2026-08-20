@@ -1,0 +1,64 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# dsh-env — 手动管理命令(用户从 SSH 调用)
+#
+# 用法:
+#   dsh-env setup    # 等同 /etc/init.d/deepseek_harness setup
+#   dsh-env status   # 打印状态
+#   dsh-env logs     # tail 日志
+#   dsh-env shell    # 进入 dsh runtime 的 bash(若有)
+#   dsh-env config   # 打印当前 UCI 配置
+#   dsh-env help
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INSTALL_LIBEXEC="/usr/libexec"
+
+cmd="${1:-help}"
+
+case "$cmd" in
+	setup)
+		exec /etc/init.d/deepseek_harness setup
+		;;
+	status)
+		exec /etc/init.d/deepseek_harness status
+		;;
+	logs)
+		shift
+		exec /etc/init.d/deepseek_harness logs "$@"
+		;;
+	shell)
+		exec /bin/sh -c '. "$INSTALL_LIBEXEC/dsh-paths.sh" && exec /bin/sh'
+		;;
+	config)
+		exec /bin/sh -c 'uci show deepseek_harness'
+		;;
+	start|stop|restart|reload)
+		exec /etc/init.d/deepseek_harness "$cmd"
+		;;
+	enable|disable)
+		exec /etc/init.d/deepseek_harness "$cmd"
+		;;
+	help|--help|-h|"")
+		cat <<EOF
+dsh-env — DeepSeek Harness 管理入口
+
+  setup       安装/更新 runtime bundle
+  teardown    卸载 runtime(保留 UCI)
+  start       启动服务
+  stop        停止服务
+  restart     重启服务
+  reload      重新读取 UCI
+  enable      开机自启
+  disable     取消自启
+  status      打印状态
+  logs [N]    tail 日志
+  config      打印 UCI 配置
+  shell       进入 runtime shell
+EOF
+		;;
+	*)
+		echo "unknown command: $cmd" >&2
+		exit 2
+		;;
+esac

@@ -1,0 +1,10 @@
+# shellcheck configuration for OpenWrt / iStoreOS targets
+# iStoreOS 24.10.8 默认 BusyBox 1.36.1 ash
+shell=sh
+external-sources=true
+severity=style
+enable=quote-param-vars
+disable=SC1091
+# SC1091 sourced file not found: paths like /etc/init.d/functions 在 router 上才存在,本地静态扫不到
+disable=SC2155
+# SC2155 declare and assign separately: 我们刻意一次性写 local var=$(cmd) 这种

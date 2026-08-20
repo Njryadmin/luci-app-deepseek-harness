@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# build.yml — Build the LuCI .ipk package
+#
+# Runs on every push + tag, builds for OpenWrt 24.10.x via official SDK.
+# On tag (v*), uploads the .ipk to a GitHub Release.
+
+name: build-ipk
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build .ipk (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache git \
+            python3 python3-distutils python3-docutils \
+            rsync subversion
+
+      - name: Clone OpenWrt SDK (24.10.7, ${{ matrix.arch }})
+        id: sdk
+        run: |
+          cd ${{ runner.workspace }}
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            SDK_URL="https://downloads.openwrt.org/releases/24.10.7/targets/x86/64/openwrt-sdk-24.10.7-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+            REPO_PATH="package/luci-app-deepseek-harness"
+          else
+            SDK_URL="https://downloads.openwrt.org/releases/24.10.7/targets/armsr/armv8/openwrt-sdk-24.10.7-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+            REPO_PATH="package/luci-app-deepseek-harness"
+          fi
+          mkdir -p sdk && cd sdk
+          curl -fsSL -o sdk.tar.zst "$SDK_URL"
+          tar --use-compress-program=unzstd -xf sdk.tar.zst --strip-components=1
+          echo "REPO_PATH=$REPO_PATH" >> $GITHUB_OUTPUT
+
+      - name: Copy sources into SDK
+        run: |
+          cd ${{ runner.workspace }}/sdk
+          mkdir -p ${{ steps.sdk.outputs.REPO_PATH }}
+          rsync -a --exclude='.git' --exclude='dist' \
+            ${{ github.workspace }}/ \
+            ${{ steps.sdk.outputs.REPO_PATH }}/
+
+      - name: Update & install feeds
+        run: |
+          cd ${{ runner.workspace }}/sdk
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          ./scripts/feeds install -p luci luci-base lua
+          ./scripts/feeds install -p packages curl wget ca-bundle tar xz \
+            coreutils-stat coreutils-sha256sum coreutils-nohup python3-light
+
+      - name: Build
+        run: |
+          cd ${{ runner.workspace }}/sdk
+          make package/luci-app-deepseek-harness/compile V=s -j$(nproc)
+
+      - name: Locate .ipk
+        id: ipk
+        run: |
+          cd ${{ runner.workspace }}/sdk
+          find bin -name 'luci-app-deepseek-harness_*.ipk' -print > ipk.list
+          cat ipk.list
+          echo "IPK_PATH=$(head -1 ipk.list)" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipk-${{ matrix.arch }}
+          path: ${{ steps.ipk.outputs.IPK_PATH }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.ipk
+          generate_release_notes: true

@@ -1,0 +1,24 @@
+# LuCI app for DeepSeek Harness — default UCI config
+# Single section `main` (合并了 v0.x.x 的 main + model + meta,避免字段漂移)
+
+config deepseek_harness 'main'
+	# ===== 安装 / 运行 =====
+	option enabled '0'                # 总开关:0 = 不安装不启动,1 = 完整运行
+	option install_path '/opt/deepseek-harness'
+	option listen_port '8123'
+	option listen_host '0.0.0.0'
+	option bundle_version '0.1.0-rc.7'  # 锁死 dsh 版本
+	option arch 'auto'                  # x86_64 / aarch64 / auto
+
+	# ===== DeepSeek API 配置 =====
+	option api_base 'https://api.deepseek.com'
+	option api_key ''                   # 在 UI 填入
+	option model 'deepseek-chat'
+	option temperature '0.7'
+	option max_tokens '4096'
+
+	# ===== 行为 =====
+	option auto_start '1'               # 开机自启
+	option cors_origins '*'             # CORS,生产环境应改为具体域名
+	option log_level 'info'             # debug/info/warn/error
+	option relay_enabled '0'            # LAN 访问中继(可选,socat loopback)

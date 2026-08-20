@@ -1,0 +1,60 @@
+<%#
+ SPDX-License-Identifier: Apache-2.0
+ Help page for luci-app-deepseek-harness
+%>
+<%+header%>
+<h2>DeepSeek Harness — Help</h2>
+
+<h3>Quick start</h3>
+<ol>
+	<li>Go to <strong>Basic Settings</strong> and check <em>Enable service</em>.</li>
+	<li>(Optional) Edit <strong>API &amp; Model</strong> to set your DeepSeek API key.</li>
+	<li>Open the <strong>Install</strong> tab and click <em>Install / Update</em>.</li>
+	<li>Wait ~2-5 minutes for the bundle to download and extract.</li>
+	<li>Go back to <strong>Status</strong> — it should show <em>Running</em>.</li>
+</ol>
+
+<h3>What is this plugin?</h3>
+<p>
+	This is a LuCI front-end for <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-harness</a>,
+	an AI agent framework by DeepSeek.
+	The plugin downloads a precompiled dsh runtime bundle (Node.js 22.23.0 musl + dsh 0.1.0-rc.7)
+	and runs it as a procd-managed HTTP service on your router.
+</p>
+
+<h3>Requirements</h3>
+<ul>
+	<li>iStoreOS 24.10.8 or any OpenWrt 24.10.x</li>
+	<li>Architecture: x86_64 or aarch64</li>
+	<li>libc: musl (iStoreOS default)</li>
+	<li>RAM: ≥ 1 GB (dsh recommends ≥ 1 GB)</li>
+	<li>Disk: ≥ 500 MB free in <code>/opt</code> for the bundle</li>
+</ul>
+
+<h3>CLI</h3>
+<pre>
+dsh-env setup      # install/update bundle
+dsh-env status     # show state
+dsh-env logs       # tail logs
+dsh-env start|stop|restart
+dsh-env config     # print UCI config
+dsh-env shell      # enter runtime shell
+</pre>
+
+<h3>Troubleshooting</h3>
+<ul>
+	<li><strong>Bundle download fails:</strong> check DNS + HTTPS connectivity to github.com / npmmirror.com</li>
+	<li><strong>Node binary not executable:</strong> verify arch with <code>uname -m</code>, set UCI <code>arch</code> explicitly</li>
+	<li><strong>dsh exits immediately:</strong> check <code>dsh-env logs</code> for missing dependencies (python3-light)</li>
+	<li><strong>LAN clients can't connect:</strong> if <code>listen_host=127.0.0.1</code>, enable <code>relay_enabled=1</code></li>
+</ul>
+
+<h3>Links</h3>
+<ul>
+	<li><a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-harness (upstream)</a></li>
+	<li><a href="https://www.npmjs.com/package/@deepseek-ai/dsh">@deepseek-ai/dsh (npm)</a></li>
+	<li><a href="https://github.com/Njryadmin/luci-app-deepseek-harness">luci-app-deepseek-harness (this repo)</a></li>
+	<li><a href="https://github.com/10000ge10000/luci-app-openclaw">10000ge10000/luci-app-openclaw (layout inspiration, different project)</a></li>
+</ul>
+
+<%+footer%>

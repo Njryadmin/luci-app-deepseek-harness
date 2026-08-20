@@ -1,0 +1,139 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: Apache-2.0
+#
+# procd init script for DeepSeek Harness
+#
+# 设计要点(吸取 v0.2.x 的教训):
+#   - 不在 service_triggers 里挂 /opt 触发器(procd 重启风暴)
+#   - 不在 PROCD_DEBUG_LOG 期间用 `set -e`(silent exit)
+#   - 不直接 exec </dev/null(会让 procd 误判为退出)
+#   - 用 setsid + </dev/null 由调用方(本 init 脚本)负责
+
+USE_PROCD=1
+INIT_NAME=deepseek_harness
+EXTRA_COMMANTS="setup status teardown logs"
+EXTRA_HELP="	setup   Run the bundled installer (download + extract dsh runtime)
+	teardown Remove dsh runtime from install_path
+	status   Show current state
+	logs     Tail the last 50 log lines"
+
+START=99
+STOP=01
+
+# 关键修复 v0.2.2:不要在这里 set -e,procd 在 DEBUG 模式下 set -e 会 silent exit
+# 关键修复 v0.2.4:不要用 install / uninstall 命令名(撞 BusyBox builtin)
+# 关键修复 v0.3.0:不要在 procd 进程树内 exec </dev/null
+
+start_service() {
+	# 总开关
+	local enabled
+	config_get_bool enabled main enabled 0
+	if [ "$enabled" -ne 1 ]; then
+		logger -t "$INIT_NAME" "service disabled in UCI (enabled=$enabled)"
+		return 1
+	fi
+
+	local install_path listen_host listen_port bundle_version arch
+	config_get install_path main install_path '/opt/deepseek-harness'
+	config_get listen_host main listen_host '0.0.0.0'
+	config_get listen_port main listen_port '8123'
+	config_get bundle_version main bundle_version '0.1.0-rc.7'
+	config_get arch main arch 'auto'
+
+	# Bundle 必须存在(否则 setup_dsh 未跑过)
+	local marker="$install_path/.dsh-installed"
+	if [ ! -f "$marker" ]; then
+		logger -t "$INIT_NAME" "dsh runtime not installed at $install_path (run 'setup')"
+		return 1
+	fi
+
+	# Read API key from UCI
+	local api_key model temperature
+	config_get api_key main api_key ''
+	config_get model main model 'deepseek-chat'
+	config_get temperature main temperature '0.7'
+
+	# Generate dsh env file (consumed by dsh-wrapper.sh)
+	local env_file="/tmp/dsh-runtime.env"
+	{
+		echo "DSH_INSTALL_PATH=$install_path"
+		echo "DSH_LISTEN_HOST=$listen_host"
+		echo "DSH_LISTEN_PORT=$listen_port"
+		echo "DSH_BUNDLE_VERSION=$bundle_version"
+		echo "DSH_ARCH=$arch"
+		echo "DEEPSEEK_API_KEY=$api_key"
+		echo "DEEPSEEK_MODEL=$model"
+		echo "DEEPSEEK_TEMPERATURE=$temperature"
+		echo "DSH_PIDFILE=/var/run/dsh.pid"
+		echo "DSH_LOG=/var/log/dsh.log"
+	} > "$env_file"
+	chmod 0600 "$env_file"
+
+	# Start dsh via procd
+	procd_open_instance
+	procd_set_param command /usr/libexec/dsh-wrapper.sh start
+	procd_set_param env_file "$env_file"
+	# 重启策略:仅在显式失败时重启(procd 会跟踪 exit code)
+	procd_set_param respawn \
+		"3600" "5" "5"   # threshold=3600s, retries=5, delay=5s
+	procd_set_param stdout 0            # stdout -> /dev/null
+	procd_set_param stderr 1            # stderr -> logd
+	procd_set_param pidfile /var/run/dsh.pid
+	procd_set_param term_timeout 10     # 10s 软终止
+	procd_close_instance
+
+	logger -t "$INIT_NAME" "started (port=$listen_port, bundle=$bundle_version)"
+}
+
+stop_service() {
+	# 让 wrapper 优雅退出(SIGTERM)
+	[ -f /var/run/dsh.pid ] && kill -TERM "$(cat /var/run/dsh.pid)" 2>/dev/null
+	return 0
+}
+
+# ----- Extra commands exposed in `EXTRA_COMMANTS` -----
+
+setup() {
+	local rc=0
+	# 调用 setup_dsh 命名(v0.2.4 fix:避开 BusyBox install builtin)
+	if [ -x /usr/libexec/dsh-install.sh ]; then
+		/usr/libexec/dsh-install.sh setup || rc=$?
+	else
+		echo "dsh-install.sh missing" >&2
+		rc=1
+	fi
+	return $rc
+}
+
+teardown() {
+	local rc=0
+	if [ -x /usr/libexec/dsh-install.sh ]; then
+		/usr/libexec/dsh-install.sh teardown || rc=$?
+	else
+		echo "dsh-install.sh missing" >&2
+		rc=1
+	fi
+	return $rc
+}
+
+status() {
+	if [ -x /usr/libexec/dsh-install.sh ]; then
+		/usr/libexec/dsh-install.sh status
+		return $?
+	fi
+	return 1
+}
+
+logs() {
+	if [ -x /usr/libexec/dsh-install.sh ]; then
+		/usr/libexec/dsh-install.sh logs
+		return $?
+	fi
+	return 1
+}
+
+# uci functions (required by /etc/config/deepseek_harness)
+service_triggers() {
+	# 仅在 enabled 字段变更时重启
+	procd_add_reload_trigger "deepseek_harness"
+}

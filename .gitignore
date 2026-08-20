@@ -1,0 +1,46 @@
+# Build artifacts
+*.ipk
+*.run
+*.tar.xz
+*.tar.gz
+*.zip
+*.deb
+
+# Node.js
+node_modules/
+.npm/
+node/
+dist/
+build/
+out/
+
+# Bundle staging
+.bundle-staging/
+runtime/
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Lua
+luac.out
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# WorkBuddy
+.workbuddy/
+
+# OS
+.directory

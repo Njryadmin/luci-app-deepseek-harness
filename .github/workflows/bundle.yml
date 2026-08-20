@@ -1,0 +1,184 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# bundle.yml — Build the precompiled dsh runtime bundle
+#
+# 在 Alpine musl 容器里:
+#   1. 拉取 Node.js 22.23.0 musl 二进制
+#   2. npm install -g @deepseek-ai/dsh@0.1.0-rc.7 --omit=dev --ignore-scripts
+#   3. 预初始化 dsh profile + 拉常用 patch bundles(可选)
+#   4. 打包成 dsh-bundle-musl-{arch}-{version}.tar.xz
+#   5. 计算 SHA256,上传为 GitHub Release asset
+#
+# 触发:
+#   - workflow_dispatch 手动
+#   - schedule 每周日 UTC 03:00 (检测上游 npm 更新)
+#   - tag dsh-bundle-v*
+
+name: build-dsh-bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      dsh_version:
+        description: 'dsh version to bundle (npm tag)'
+        required: true
+        default: '0.1.0-rc.7'
+      include_patches:
+        description: 'Include pre-downloaded patch bundles (slower)'
+        required: false
+        default: 'false'
+        type: boolean
+  schedule:
+    - cron: '0 3 * * 0'  # weekly Sunday 03:00 UTC
+  push:
+    tags: ['dsh-bundle-v*']
+
+jobs:
+  bundle:
+    name: Bundle (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - target_arch: x86_64
+            node_url: https://nodejs.org/dist/v22.23.0/node-v22.23.0-linux-x64-musl.tar.xz
+            node_dir: node-v22.23.0-linux-x64-musl
+          - target_arch: aarch64
+            node_url: https://nodejs.org/dist/v22.23.0/node-v22.23.0-linux-arm64-musl.tar.xz
+            node_dir: node-v22.23.0-linux-arm64-musl
+
+    container:
+      image: alpine:3.20
+      options: --privileged
+
+    env:
+      DSH_VERSION: ${{ github.event.inputs.dsh_version || '0.1.0-rc.7' }}
+      INCLUDE_PATCHES: ${{ github.event.inputs.include_patches || 'false' }}
+      TARGET_ARCH: ${{ matrix.target_arch }}
+
+    steps:
+      - name: Install build tools
+        run: |
+          apk add --no-cache \
+            bash curl wget tar xz git nodejs-current npm \
+            python3 py3-pip ca-certificates \
+            musl-dev linux-headers
+
+      - name: Verify Node.js host arch
+        run: |
+          node -v
+          echo "Node arch: $(node -p process.arch)"
+          echo "Target arch: $TARGET_ARCH"
+          [ "$(node -p process.arch)" = "$TARGET_ARCH" ] || \
+            (echo "Node arch mismatch — using precompiled musl tarball instead" && exit 0)
+
+      - name: Download precompiled Node.js musl tarball
+        run: |
+          mkdir -p /tmp/node-stage
+          cd /tmp/node-stage
+          curl -fsSL -o node.tar.xz "${{ matrix.node_url }}"
+          echo "Downloaded $(stat -c %s node.tar.xz) bytes"
+          tar -xJf node.tar.xz
+          echo "Node bin: $(ls -la ${{ matrix.node_dir }}/bin/node)"
+
+      - name: Prepare bundle staging
+        run: |
+          mkdir -p /tmp/bundle/dsh-runtime-${TARGET_ARCH}
+          cd /tmp/bundle/dsh-runtime-${TARGET_ARCH}
+          mkdir -p node dsh profile patches
+          # Copy precompiled Node.js
+          cp -a /tmp/node-stage/${{ matrix.node_dir }}/* node/
+          # Verify node binary
+          ./node/bin/node --version
+
+      - name: Install dsh via npm
+        working-directory: /tmp/bundle/dsh-runtime-${TARGET_ARCH}/dsh
+        run: |
+          # Initialize a minimal package.json (npm wants one)
+          cat > package.json <<EOF
+          {
+            "name": "dsh-runtime-bundle",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@deepseek-ai/dsh": "${DSH_VERSION}"
+            }
+          }
+          EOF
+          # --ignore-scripts: skip postinstall scripts that try to compile landlock
+          #                  / node-pty native bindings (they fail on Alpine musl)
+          # --omit=dev:     skip dev dependencies
+          # --no-audit:     skip npm audit (faster)
+          npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+            --loglevel=warn 2>&1 | tail -30
+
+          # Verify dsh cli is present
+          ls -la node_modules/.bin/dsh
+          ls -la node_modules/@deepseek-ai/dsh/dist/cli.js
+
+      - name: Create default profile
+        run: |
+          cat > /tmp/bundle/dsh-runtime-${TARGET_ARCH}/profile/default.json <<'EOF'
+          {
+            "version": 1,
+            "provider": {
+              "name": "deepseek",
+              "apiBase": "https://api.deepseek.com",
+              "model": "deepseek-chat",
+              "temperature": 0.7,
+              "maxTokens": 4096
+            },
+            "server": {
+              "host": "0.0.0.0",
+              "port": 8123,
+              "corsOrigins": "*"
+            },
+            "logging": {
+              "level": "info"
+            }
+          }
+          EOF
+
+      - name: Pre-download patch bundles (optional)
+        if: env.INCLUDE_PATCHES == 'true'
+        working-directory: /tmp/bundle/dsh-runtime-${TARGET_ARCH}
+        run: |
+          # Run dsh web briefly to trigger patch bundle download
+          timeout 90 ./node/bin/node \
+            ./dsh/node_modules/@deepseek-ai/dsh/dist/cli.js \
+            web --host 127.0.0.1 --port 18123 &
+          DSH_PID=$!
+          sleep 60
+          kill -TERM $DSH_PID 2>/dev/null || true
+          sleep 2
+          # Verify patches downloaded
+          ls -la patches/ 2>&1 | head -20
+
+      - name: Compute SHA256
+        run: |
+          cd /tmp/bundle
+          # Bundle name matches what dsh-fetch-runtime.sh expects
+          BUNDLE_NAME="dsh-bundle-musl-${TARGET_ARCH}-${DSH_VERSION}.tar.xz"
+          tar -cJf "$BUNDLE_NAME" "dsh-runtime-${TARGET_ARCH}"
+          sha256sum "$BUNDLE_NAME" > "${BUNDLE_NAME}.sha256"
+          ls -la "$BUNDLE_NAME"*
+          cat "${BUNDLE_NAME}.sha256"
+
+      - name: Upload to release (if tag)
+        if: startsWith(github.ref, 'refs/tags/dsh-bundle-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd /tmp/bundle
+          BUNDLE_NAME="dsh-bundle-musl-${TARGET_ARCH}-${DSH_VERSION}.tar.xz"
+          gh release upload --clobber \
+            "${{ github.ref_name }}" \
+            "$BUNDLE_NAME" \
+            "${BUNDLE_NAME}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-bundle-${{ matrix.target_arch }}
+          path: /tmp/bundle/dsh-bundle-musl-${{ matrix.target_arch }}-${DSH_VERSION}.tar.xz*

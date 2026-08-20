@@ -1,0 +1,782 @@
+<%#
+ SPDX-License-Identifier: Apache-2.0
+ DeepSeek Harness — SPA Dashboard v1.0
+
+ 设计目标(吸取 v0.3.3 教训):
+  1. 所有 class 用 .dsh- 前缀,完全隔离 LuCI 全局 CSS
+  2. 关键元素用 all: revert 重置 + box-sizing: border-box
+  3. 纯 vanilla JS(无 jQuery / Vue / React),路由器离线也能用
+  4. 6 个 tab: 状态 / 安装 / 配置 / API / 日志 / 关于
+  5. JSON API + 轮询 3s + 错误展示
+  6. 暗色 / 亮色自适应 (prefers-color-scheme)
+%>
+
+<%+header%>
+
+<div class="dsh-root">
+<style>
+/* ===== 重置:避免 LuCI 全局 CSS 干扰 ===== */
+.dsh-root *,
+.dsh-root *::before,
+.dsh-root *::after {
+	box-sizing: border-box;
+	all: revert;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+		"Helvetica Neue", Arial, sans-serif;
+}
+
+/* ===== 主题变量 ===== */
+.dsh-root {
+	--dsh-bg: #f7f7f8;
+	--dsh-panel: #ffffff;
+	--dsh-border: #e5e7eb;
+	--dsh-text: #111827;
+	--dsh-text-muted: #6b7280;
+	--dsh-accent: #4f46e5;
+	--dsh-accent-hover: #4338ca;
+	--dsh-success: #10b981;
+	--dsh-warning: #f59e0b;
+	--dsh-danger: #ef4444;
+	--dsh-info: #3b82f6;
+	--dsh-shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+	--dsh-radius: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+	.dsh-root {
+		--dsh-bg: #0f172a;
+		--dsh-panel: #1e293b;
+		--dsh-border: #334155;
+		--dsh-text: #f1f5f9;
+		--dsh-text-muted: #94a3b8;
+		--dsh-accent: #6366f1;
+		--dsh-accent-hover: #818cf8;
+		--dsh-shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.2);
+	}
+}
+
+.dsh-root {
+	background: var(--dsh-bg);
+	color: var(--dsh-text);
+	min-height: 100vh;
+	padding: 24px;
+	max-width: 1200px;
+	margin: 0 auto;
+}
+
+/* ===== Header ===== */
+.dsh-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 16px 0;
+	border-bottom: 1px solid var(--dsh-border);
+	margin-bottom: 24px;
+}
+
+.dsh-header h1 {
+	font-size: 24px;
+	font-weight: 700;
+	margin: 0;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.dsh-logo {
+	width: 32px;
+	height: 32px;
+	background: var(--dsh-accent);
+	border-radius: 8px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: white;
+	font-weight: bold;
+}
+
+.dsh-header-right {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	font-size: 13px;
+	color: var(--dsh-text-muted);
+}
+
+.dsh-status-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background: var(--dsh-text-muted);
+	display: inline-block;
+}
+
+.dsh-status-dot.running { background: var(--dsh-success); box-shadow: 0 0 0 4px rgba(16,185,129,.2); }
+.dsh-status-dot.error   { background: var(--dsh-danger);  box-shadow: 0 0 0 4px rgba(239,68,68,.2); }
+.dsh-status-dot.warn    { background: var(--dsh-warning); box-shadow: 0 0 0 4px rgba(245,158,11,.2); }
+
+/* ===== Tabs ===== */
+.dsh-tabs {
+	display: flex;
+	gap: 2px;
+	border-bottom: 1px solid var(--dsh-border);
+	margin-bottom: 24px;
+	overflow-x: auto;
+}
+
+.dsh-tab {
+	padding: 12px 20px;
+	background: transparent;
+	border: none;
+	border-bottom: 2px solid transparent;
+	color: var(--dsh-text-muted);
+	font-size: 14px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: color .15s, border-color .15s;
+	white-space: nowrap;
+}
+
+.dsh-tab:hover { color: var(--dsh-text); }
+.dsh-tab.active {
+	color: var(--dsh-accent);
+	border-bottom-color: var(--dsh-accent);
+}
+
+/* ===== Panel ===== */
+.dsh-panel {
+	background: var(--dsh-panel);
+	border: 1px solid var(--dsh-border);
+	border-radius: var(--dsh-radius);
+	padding: 24px;
+	box-shadow: var(--dsh-shadow);
+	margin-bottom: 16px;
+}
+
+.dsh-panel-title {
+	font-size: 16px;
+	font-weight: 600;
+	margin: 0 0 16px 0;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+.dsh-panel-title .dsh-actions {
+	display: flex;
+	gap: 8px;
+}
+
+/* ===== Grid ===== */
+.dsh-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: 16px;
+}
+
+.dsh-card {
+	background: var(--dsh-panel);
+	border: 1px solid var(--dsh-border);
+	border-radius: var(--dsh-radius);
+	padding: 16px;
+}
+
+.dsh-card-label {
+	font-size: 12px;
+	color: var(--dsh-text-muted);
+	text-transform: uppercase;
+	letter-spacing: .04em;
+	margin-bottom: 6px;
+}
+
+.dsh-card-value {
+	font-size: 20px;
+	font-weight: 600;
+	color: var(--dsh-text);
+	word-break: break-all;
+}
+
+.dsh-card-sub {
+	font-size: 12px;
+	color: var(--dsh-text-muted);
+	margin-top: 4px;
+}
+
+/* ===== Buttons ===== */
+.dsh-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 8px 16px;
+	font-size: 14px;
+	font-weight: 500;
+	background: var(--dsh-accent);
+	color: white;
+	border: none;
+	border-radius: 6px;
+	cursor: pointer;
+	transition: background .15s, opacity .15s;
+	white-space: nowrap;
+}
+
+.dsh-btn:hover:not(:disabled) { background: var(--dsh-accent-hover); }
+.dsh-btn:disabled { opacity: .5; cursor: not-allowed; }
+.dsh-btn.secondary {
+	background: transparent;
+	color: var(--dsh-text);
+	border: 1px solid var(--dsh-border);
+}
+.dsh-btn.secondary:hover:not(:disabled) {
+	background: var(--dsh-bg);
+}
+.dsh-btn.danger { background: var(--dsh-danger); }
+.dsh-btn.danger:hover:not(:disabled) { background: #dc2626; }
+
+/* ===== Form ===== */
+.dsh-field {
+	margin-bottom: 16px;
+}
+
+.dsh-field-label {
+	display: block;
+	font-size: 13px;
+	font-weight: 500;
+	margin-bottom: 6px;
+	color: var(--dsh-text);
+}
+
+.dsh-field-hint {
+	font-size: 12px;
+	color: var(--dsh-text-muted);
+	margin-top: 4px;
+}
+
+.dsh-input,
+.dsh-select,
+.dsh-textarea {
+	width: 100%;
+	padding: 8px 12px;
+	font-size: 14px;
+	background: var(--dsh-bg);
+	color: var(--dsh-text);
+	border: 1px solid var(--dsh-border);
+	border-radius: 6px;
+	appearance: none;
+	-webkit-appearance: none;
+}
+
+.dsh-input:focus,
+.dsh-select:focus,
+.dsh-textarea:focus {
+	outline: none;
+	border-color: var(--dsh-accent);
+	box-shadow: 0 0 0 3px rgba(79,70,229,.1);
+}
+
+.dsh-textarea {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+	resize: vertical;
+	min-height: 240px;
+}
+
+/* ===== Logs ===== */
+.dsh-logs {
+	background: #0f172a;
+	color: #e2e8f0;
+	border-radius: 6px;
+	padding: 16px;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+	line-height: 1.5;
+	max-height: 480px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+@media (prefers-color-scheme: dark) {
+	.dsh-logs { background: #020617; }
+}
+
+/* ===== Toast / Alert ===== */
+.dsh-toast {
+	position: fixed;
+	top: 24px;
+	right: 24px;
+	padding: 12px 16px;
+	background: var(--dsh-panel);
+	border: 1px solid var(--dsh-border);
+	border-left: 4px solid var(--dsh-accent);
+	border-radius: 6px;
+	box-shadow: var(--dsh-shadow);
+	max-width: 360px;
+	z-index: 1000;
+	animation: dsh-slide-in .3s ease-out;
+}
+
+.dsh-toast.success { border-left-color: var(--dsh-success); }
+.dsh-toast.error   { border-left-color: var(--dsh-danger); }
+.dsh-toast.warn    { border-left-color: var(--dsh-warning); }
+
+@keyframes dsh-slide-in {
+	from { transform: translateX(100%); opacity: 0; }
+	to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 640px) {
+	.dsh-root { padding: 12px; }
+	.dsh-grid { grid-template-columns: 1fr; }
+}
+
+/* ===== Tab content ===== */
+.dsh-tab-pane { display: none; }
+.dsh-tab-pane.active { display: block; }
+</style>
+
+<header class="dsh-header">
+	<h1>
+		<span class="dsh-logo">DS</span>
+		<span>DeepSeek Harness</span>
+	</h1>
+	<div class="dsh-header-right">
+		<span class="dsh-status-dot" id="dsh-status-dot"></span>
+		<span id="dsh-status-text">Loading…</span>
+		<span style="opacity:.5">·</span>
+		<span>v<%=pcdata(config.bundle_version)%></span>
+	</div>
+</header>
+
+<nav class="dsh-tabs" role="tablist">
+	<button class="dsh-tab active" data-tab="status">状态</button>
+	<button class="dsh-tab" data-tab="install">安装</button>
+	<button class="dsh-tab" data-tab="config">配置</button>
+	<button class="dsh-tab" data-tab="api">API</button>
+	<button class="dsh-tab" data-tab="logs">日志</button>
+	<button class="dsh-tab" data-tab="about">关于</button>
+</nav>
+
+<!-- ===== Tab: Status ===== -->
+<section class="dsh-tab-pane active" data-pane="status">
+	<div class="dsh-grid">
+		<div class="dsh-card">
+			<div class="dsh-card-label">Runtime</div>
+			<div class="dsh-card-value" id="dsh-runtime">—</div>
+			<div class="dsh-card-sub" id="dsh-runtime-sub"></div>
+		</div>
+		<div class="dsh-card">
+			<div class="dsh-card-label">Process</div>
+			<div class="dsh-card-value" id="dsh-process">—</div>
+			<div class="dsh-card-sub" id="dsh-process-sub"></div>
+		</div>
+		<div class="dsh-card">
+			<div class="dsh-card-label">Architecture</div>
+			<div class="dsh-card-value" id="dsh-arch">—</div>
+			<div class="dsh-card-sub" id="dsh-libc"></div>
+		</div>
+		<div class="dsh-card">
+			<div class="dsh-card-label">Node.js</div>
+			<div class="dsh-card-value" id="dsh-node">—</div>
+			<div class="dsh-card-sub">precompiled in bundle</div>
+		</div>
+		<div class="dsh-card">
+			<div class="dsh-card-label">Listen</div>
+			<div class="dsh-card-value" id="dsh-listen">—</div>
+			<div class="dsh-card-sub" id="dsh-listen-sub"></div>
+		</div>
+		<div class="dsh-card">
+			<div class="dsh-card-label">Log size</div>
+			<div class="dsh-card-value" id="dsh-logsize">—</div>
+			<div class="dsh-card-sub" id="dsh-logsize-sub"></div>
+		</div>
+	</div>
+
+	<div class="dsh-panel" style="margin-top:16px">
+		<h3 class="dsh-panel-title">
+			<span>Quick actions</span>
+		</h3>
+		<div style="display:flex;gap:8px;flex-wrap:wrap">
+			<button class="dsh-btn" data-action="start">Start</button>
+			<button class="dsh-btn secondary" data-action="stop">Stop</button>
+			<button class="dsh-btn secondary" data-action="restart">Restart</button>
+			<button class="dsh-btn secondary" data-action="reload">Reload UCI</button>
+			<button class="dsh-btn danger" data-action="teardown" id="dsh-btn-teardown">Teardown</button>
+		</div>
+	</div>
+</section>
+
+<!-- ===== Tab: Install ===== -->
+<section class="dsh-tab-pane" data-pane="install">
+	<div class="dsh-panel">
+		<h3 class="dsh-panel-title">
+			<span>Install / Update dsh runtime</span>
+		</h3>
+		<p style="font-size:13px;color:var(--dsh-text-muted);margin:0 0 16px">
+			This downloads a precompiled <code>dsh-runtime-bundle</code> from GitHub Releases,
+			verifies its SHA256 checksum, and extracts it to <code id="dsh-install-path">/opt/deepseek-harness</code>.
+		</p>
+		<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+			<button class="dsh-btn" data-action="setup" id="dsh-btn-setup">
+				<span id="dsh-btn-setup-label">Install / Update</span>
+			</button>
+			<button class="dsh-btn secondary" data-action="validate">Validate</button>
+			<button class="dsh-btn secondary" data-action="bundle-info">Bundle info</button>
+		</div>
+		<pre class="dsh-logs" id="dsh-install-output">(no output yet)</pre>
+	</div>
+</section>
+
+<!-- ===== Tab: Config ===== -->
+<section class="dsh-tab-pane" data-pane="config">
+	<div class="dsh-panel">
+		<h3 class="dsh-panel-title">
+			<span>Configuration</span>
+			<div class="dsh-actions">
+				<button class="dsh-btn" data-action="save-config">Save</button>
+				<button class="dsh-btn secondary" data-action="load-config">Reload</button>
+			</div>
+		</h3>
+		<form id="dsh-config-form">
+			<div class="dsh-grid">
+				<div class="dsh-field">
+					<label class="dsh-field-label">Enabled</label>
+					<select class="dsh-select" name="enabled">
+						<option value="0">Disabled</option>
+						<option value="1">Enabled</option>
+					</select>
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">Install path</label>
+					<input class="dsh-input" name="install_path" type="text">
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">Listen host</label>
+					<select class="dsh-select" name="listen_host">
+						<option value="0.0.0.0">0.0.0.0 (all)</option>
+						<option value="127.0.0.1">127.0.0.1 (loopback)</option>
+					</select>
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">Listen port</label>
+					<input class="dsh-input" name="listen_port" type="number" min="1" max="65535">
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">Architecture</label>
+					<select class="dsh-select" name="arch">
+						<option value="auto">auto</option>
+						<option value="x86_64">x86_64</option>
+						<option value="aarch64">aarch64</option>
+					</select>
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">Bundle version</label>
+					<input class="dsh-input" name="bundle_version" type="text" readonly>
+					<div class="dsh-field-hint">Pinned. Update via GitHub Releases.</div>
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">API base</label>
+					<input class="dsh-input" name="api_base" type="url">
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">API key</label>
+					<input class="dsh-input" name="api_key" type="password" autocomplete="off">
+					<div class="dsh-field-hint">Stored with 0600 permission.</div>
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">Model</label>
+					<select class="dsh-select" name="model">
+						<option value="deepseek-chat">deepseek-chat</option>
+						<option value="deepseek-coder">deepseek-coder</option>
+						<option value="deepseek-reasoner">deepseek-reasoner</option>
+					</select>
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">Temperature</label>
+					<input class="dsh-input" name="temperature" type="number" min="0" max="2" step="0.1">
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">Max tokens</label>
+					<input class="dsh-input" name="max_tokens" type="number" min="64" max="32768">
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">Log level</label>
+					<select class="dsh-select" name="log_level">
+						<option value="debug">debug</option>
+						<option value="info">info</option>
+						<option value="warn">warn</option>
+						<option value="error">error</option>
+					</select>
+				</div>
+				<div class="dsh-field">
+					<label class="dsh-field-label">CORS origins</label>
+					<input class="dsh-input" name="cors_origins" type="text">
+				</div>
+			</div>
+		</form>
+	</div>
+</section>
+
+<!-- ===== Tab: API ===== -->
+<section class="dsh-tab-pane" data-pane="api">
+	<div class="dsh-panel">
+		<h3 class="dsh-panel-title">
+			<span>API endpoint</span>
+			<div class="dsh-actions">
+				<button class="dsh-btn secondary" data-action="health">Health check</button>
+			</div>
+		</h3>
+		<p style="font-size:13px;color:var(--dsh-text-muted);margin:0 0 16px">
+			dsh runs as an HTTP server on <code id="dsh-api-hostport">—</code>.
+			The full LuCI JSON API is at <code>/cgi-bin/luci/admin/services/deepseek_harness/api/v1/*</code>.
+		</p>
+		<div class="dsh-grid">
+			<div class="dsh-card">
+				<div class="dsh-card-label">GET</div>
+				<div class="dsh-card-value" style="font-size:14px">/api/v1/status</div>
+				<div class="dsh-card-sub">runtime + UCI state</div>
+			</div>
+			<div class="dsh-card">
+				<div class="dsh-card-label">POST</div>
+				<div class="dsh-card-value" style="font-size:14px">/api/v1/setup</div>
+				<div class="dsh-card-sub">trigger install/update</div>
+			</div>
+			<div class="dsh-card">
+				<div class="dsh-card-label">POST</div>
+				<div class="dsh-card-value" style="font-size:14px">/api/v1/restart</div>
+				<div class="dsh-card-sub">restart dsh</div>
+			</div>
+			<div class="dsh-card">
+				<div class="dsh-card-label">GET</div>
+				<div class="dsh-card-value" style="font-size:14px">/api/v1/logs?lines=50</div>
+				<div class="dsh-card-sub">recent log lines</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<!-- ===== Tab: Logs ===== -->
+<section class="dsh-tab-pane" data-pane="logs">
+	<div class="dsh-panel">
+		<h3 class="dsh-panel-title">
+			<span>Recent log lines</span>
+			<div class="dsh-actions">
+				<button class="dsh-btn secondary" data-action="refresh-logs">Refresh</button>
+			</div>
+		</h3>
+		<pre class="dsh-logs" id="dsh-logs">(no log lines)</pre>
+	</div>
+</section>
+
+<!-- ===== Tab: About ===== -->
+<section class="dsh-tab-pane" data-pane="about">
+	<div class="dsh-panel">
+		<h3 class="dsh-panel-title"><span>About</span></h3>
+		<p style="line-height:1.7">
+			<strong>luci-app-deepseek-harness</strong> v1.0.0-alpha.1<br>
+			LuCI front-end for <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank">deepseek-harness</a>.<br>
+			Targets iStoreOS 24.10.8 (OpenWrt 24.10.x) on x86_64 and aarch64 (musl).
+		</p>
+		<p style="line-height:1.7">
+			Sources: <a href="https://github.com/Njryadmin/luci-app-deepseek-harness" target="_blank">github.com/Njryadmin/luci-app-deepseek-harness</a><br>
+			Upstream reference: <a href="https://github.com/10000ge10000/luci-app-openclaw" target="_blank">10000ge10000/luci-app-openclaw</a> (different project, layout inspiration only)
+		</p>
+		<p style="line-height:1.7">
+			CLI: <code>dsh-env setup|status|logs|config|shell</code>
+		</p>
+	</div>
+</section>
+
+</div><!-- /.dsh-root -->
+
+<script type="text/javascript">
+(function() {
+	'use strict';
+
+	var API_BASE = '<%=pcdata(luci.dispatcher.build_url("admin/services/deepseek_harness/api/v1"))%>';
+
+	function $(sel) { return document.querySelector(sel); }
+	function $$(sel) { return document.querySelectorAll(sel); }
+
+	function toast(msg, type) {
+		var t = document.createElement('div');
+		t.className = 'dsh-toast ' + (type || '');
+		t.textContent = msg;
+		document.body.appendChild(t);
+		setTimeout(function() { t.remove(); }, 3500);
+	}
+
+	function fetchJson(path, opts) {
+		opts = opts || {};
+		return fetch(API_BASE + path, {
+			method: opts.method || 'GET',
+			headers: { 'Content-Type': 'application/json' },
+			body: opts.body ? JSON.stringify(opts.body) : null
+		}).then(function(r) { return r.json(); });
+	}
+
+	// ===== Tab switching =====
+	$$('.dsh-tab').forEach(function(btn) {
+		btn.addEventListener('click', function() {
+			var tab = btn.getAttribute('data-tab');
+			$$('.dsh-tab').forEach(function(b) { b.classList.remove('active'); });
+			$$('.dsh-tab-pane').forEach(function(p) { p.classList.remove('active'); });
+			btn.classList.add('active');
+			document.querySelector('.dsh-tab-pane[data-pane="' + tab + '"]').classList.add('active');
+			if (tab === 'config')   loadConfig();
+			if (tab === 'logs')     refreshLogs();
+			if (tab === 'install')  $('#dsh-install-output').textContent = '(run install/update to see output)';
+		});
+	});
+
+	// ===== Polling status =====
+	function setText(id, txt) { var el = document.getElementById(id); if (el) el.textContent = txt; }
+
+	function setStatusDot(state) {
+		var dot = $('#dsh-status-dot');
+		dot.classList.remove('running', 'error', 'warn');
+		if (state === 'running') dot.classList.add('running');
+		else if (state === 'error') dot.classList.add('error');
+		else dot.classList.add('warn');
+	}
+
+	function pollStatus() {
+		fetchJson('/status').then(function(j) {
+			if (!j || !j.ok) return;
+			var r = j.data.runtime || {};
+			var u = j.data.uci || {};
+			setText('dsh-status-text',
+				(r.runtime_installed === '1' && r.running === '1') ? 'Running' :
+				(r.runtime_installed === '1') ? 'Installed (stopped)' : 'Not installed');
+			setStatusDot(
+				(r.runtime_installed === '1' && r.running === '1') ? 'running' :
+				(r.runtime_installed === '1') ? 'warn' : 'error');
+
+			setText('dsh-runtime', r.runtime_installed === '1' ? 'Installed' : 'Missing');
+			setText('dsh-runtime-sub', r.install_path || '—');
+
+			setText('dsh-process', r.running === '1' ? ('PID ' + (r.pid || '?')) : 'Stopped');
+			setText('dsh-process-sub',
+				r.running === '1' ? 'service active' :
+				(r.stale_pidfile ? 'stale pidfile ' + r.stale_pidfile : 'no process'));
+
+			setText('dsh-arch', (r.arch || 'auto') + ' / ' + (r.libc || '?'));
+			setText('dsh-libc', 'node: ' + (r.node_version || '—'));
+
+			setText('dsh-node', r.node_version || '—');
+			setText('dsh-listen', (u.listen_host || '0.0.0.0') + ':' + (u.listen_port || '8123'));
+			setText('dsh-listen-sub', u.enabled === '1' ? 'enabled' : 'disabled');
+
+			setText('dsh-logsize', (parseInt(r.log_size_bytes || '0', 10) / 1024).toFixed(1) + ' KB');
+			setText('dsh-logsize-sub', '/var/log/dsh.log');
+
+			setText('dsh-api-hostport',
+				(u.listen_host === '127.0.0.1' ? 'http://127.0.0.1:' : 'http://<router-ip>:') + (u.listen_port || '8123'));
+		}).catch(function() { /* silent */ });
+	}
+
+	// ===== Action buttons =====
+	function action(name) {
+		var map = {
+			start:     { path: '/start',     method: 'POST', label: 'start',     ok: 'started' },
+			stop:      { path: '/stop',      method: 'POST', label: 'stop',      ok: 'stopped' },
+			restart:   { path: '/restart',   method: 'POST', label: 'restart',   ok: 'restarted' },
+			reload:    { path: '/start',     method: 'POST', label: 'reload UCI', ok: 'reloaded' },
+			teardown:  { path: '/teardown',  method: 'POST', label: 'teardown',  ok: 'torn down' },
+			setup:     { path: '/setup',     method: 'POST', label: 'setup',     ok: 'setup started' },
+			validate:  { path: '/bundle_info', method: 'GET', label: 'validate',  ok: 'info loaded' },
+			'bundle-info': { path: '/bundle_info', method: 'GET', label: 'bundle-info', ok: 'info loaded' },
+			health:    { path: '/health',    method: 'GET', label: 'health',    ok: 'health checked' },
+		};
+		var m = map[name];
+		if (!m) { toast('unknown action: ' + name, 'error'); return; }
+
+		if (name === 'teardown' && !confirm('Teardown removes the dsh runtime. UCI config is preserved. Continue?')) return;
+		if (name === 'setup'   && !confirm('Install/Update will redownload the bundle and may take several minutes. Continue?')) return;
+
+		toast('Running ' + m.label + '…');
+		fetchJson(m.path, { method: m.method }).then(function(j) {
+			if (j && j.ok) {
+				toast(m.label + ': ' + m.ok, 'success');
+				if (name === 'setup') pollSetupProgress();
+				setTimeout(pollStatus, 1500);
+			} else {
+				toast((j && j.error) || m.label + ' failed', 'error');
+			}
+		}).catch(function(e) { toast(m.label + ' failed: ' + e, 'error'); });
+	}
+
+	function pollSetupProgress() {
+		var out = $('#dsh-install-output');
+		out.textContent = 'Setting up...\n\n';
+		var tick = setInterval(function() {
+			fetch('/cgi-bin/luci/admin/services/deepseek_harness/api/v1/logs?lines=200')
+				.then(function(r) { return r.json(); })
+				.then(function(j) {
+					if (!j || !j.ok) return;
+					out.textContent = (j.data.lines || []).join('\n');
+					out.scrollTop = out.scrollHeight;
+				}).catch(function() { /* silent */ });
+		}, 2000);
+		setTimeout(function() { clearInterval(tick); }, 300000);  // stop after 5 min
+	}
+
+	document.body.addEventListener('click', function(e) {
+		var btn = e.target.closest('[data-action]');
+		if (!btn) return;
+		action(btn.getAttribute('data-action'));
+	});
+
+	// ===== Config form =====
+	function loadConfig() {
+		fetchJson('/config').then(function(j) {
+			if (!j || !j.ok || !j.data || !j.data.config) return;
+			var c = j.data.config;
+			var form = $('#dsh-config-form');
+			if (!form) return;
+			Object.keys(c).forEach(function(k) {
+				var el = form.elements[k];
+				if (el && el.type !== 'password') el.value = c[k] || '';
+			});
+		}).catch(function() { /* silent */ });
+	}
+
+	function saveConfig() {
+		var form = $('#dsh-config-form');
+		if (!form) return;
+		var body = {};
+		Array.prototype.forEach.call(form.elements, function(el) {
+			if (el.name) body[el.name] = el.value;
+		});
+		fetchJson('/config', { method: 'POST', body: body }).then(function(j) {
+			if (j && j.ok) toast('Config saved', 'success');
+			else toast('Save failed', 'error');
+		}).catch(function(e) { toast('Save failed: ' + e, 'error'); });
+	}
+
+	// ===== Logs =====
+	function refreshLogs() {
+		fetchJson('/logs?lines=200').then(function(j) {
+			if (!j || !j.ok) return;
+			$('#dsh-logs').textContent = (j.data.lines || []).join('\n') || '(empty)';
+			var el = $('#dsh-logs');
+			el.scrollTop = el.scrollHeight;
+		}).catch(function() { /* silent */ });
+	}
+
+	// Wire up explicit form actions
+	document.addEventListener('click', function(e) {
+		if (e.target.matches('[data-action="save-config"]')) saveConfig();
+		if (e.target.matches('[data-action="load-config"]')) loadConfig();
+		if (e.target.matches('[data-action="refresh-logs"]')) refreshLogs();
+	});
+
+	// ===== Initial load =====
+	loadConfig();
+	pollStatus();
+	setInterval(pollStatus, 3000);
+})();
+</script>
+
+<%+footer%>
