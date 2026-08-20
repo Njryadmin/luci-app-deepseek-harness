@@ -4,14 +4,21 @@
 # scripts/ar_pack.py — 纯 Python ar 归档打包器
 #
 # 用途:替代 GNU tar -cf 生成 .ipk / .deb 兼容的 ar 归档。
-# OpenWrt opkg / dpkg 都用 ar 格式解析 ipk/deb。
+# OpenWrt opkg 通过 libarchive 解析 ar 格式,要求:
+#   - magic: !<arch>\n
+#   - name 字段以 '/' 分隔 (GNU ar 标准)
+#   - 所有数字字段 (mtime/uid/gid/mode/size) 右对齐空格填充
+#   - fmag: `\x60\x0a` (backtick + LF)
 # Git Bash / Windows 上 ar 命令不一定可用,所以用 Python 实现。
 #
-# ar 格式:
-#   全局头:!<arch>\n (8 字节)
-#   每个成员: 60 字节头 + 数据
-#     name[16] mtime[12] uid[6] gid[6] mode[8] size[10] fmag[2]
-#   如果 size 为奇数,数据后填充 1 字节换行
+# ar 格式 (60 字节头):
+#   name[16]   mtime[12]   uid[6]   gid[6]   mode[8]   size[10]   fmag[2]
+# 字段类型:
+#   name:     字符 + '/' 终止 + 空格填充
+#   mtime/uid/gid/size: 十进制整数,右对齐空格
+#   mode:     八进制整数,右对齐空格
+#   fmag:     常量 "`\n"
+# 数据后如果 size 是奇数,补 1 字节 LF
 #
 # 用法:
 #   python3 ar_pack.py <output> <member1> <member2> ...
@@ -26,17 +33,18 @@ def ar_pack(members: list, out_path: str) -> None:
     """members: list of (name, bytes); out_path: output file path."""
     buf = bytearray(b"!<arch>\n")
     for name, data in members:
-        if len(name) > 16:
-            sys.exit(f"ar_pack: member name too long (>16): {name!r}")
-        # ar 头:固定 60 字节,字段左对齐空格填充
+        if len(name) > 15:
+            sys.exit(f"ar_pack: member name too long (>15): {name!r}")
+        # ar 头:固定 60 字节,字段右对齐空格填充(GNU ar 标准)
+        # 数字字段用 > 右对齐空格
         hdr = (
-            f"{name:<16}"
-            f"{0:<12}"
-            f"{0:<6}"
-            f"{0:<6}"
-            f"{0o100644:<8}"
-            f"{len(data):<10}"
-            "\x60\x0a"
+            f"{name + '/':<16}"          # name + '/' 分隔,左对齐空格
+            f"{0:>12}"                    # mtime,右对齐
+            f"{0:>6}"                     # uid
+            f"{0:>6}"                     # gid
+            f"{0o100644:>8}"              # mode (octal)
+            f"{len(data):>10}"            # size,右对齐
+            "\x60\x0a"                    # fmag = backtick + LF
         ).encode("ascii")
         buf.extend(hdr)
         buf.extend(data)
