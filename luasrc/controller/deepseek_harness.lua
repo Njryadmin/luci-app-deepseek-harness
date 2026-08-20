@@ -13,6 +13,8 @@ module("luci.controller.deepseek_harness", package.seeall)
 
 local libexec = "/usr/libexec"
 local uci = require("luci.model.uci").cursor()
+-- LuCI 24.10 (ucode runtime) 不再注入 _() 全局,需要显式 require
+local translate = require("luci.i18n").translate
 
 -- ===== 工具函数 =====
 
@@ -106,23 +108,23 @@ function index()
 	-- 主菜单入口
 	entry({"admin", "services", "deepseek_harness"},
 		call("dashboard"),
-		_("DeepSeek Harness"), 50).dependent = true
+		translate("DeepSeek Harness"), 50).dependent = true
 
 	-- SPA dashboard 子页面
 	entry({"admin", "services", "deepseek_harness", "dashboard"},
-		call("dashboard"), _("Dashboard"), 1)
+		call("dashboard"), translate("Dashboard"), 1)
 
 	-- CBI 配置页面
 	entry({"admin", "services", "deepseek_harness", "basic"},
 		cbi("deepseek_harness_basic"),
-		_("Basic Settings"), 2)
+		translate("Basic Settings"), 2)
 
 	entry({"admin", "services", "deepseek_harness", "model"},
 		cbi("deepseek_harness_model"),
-		_("API & Model"), 3)
+		translate("API & Model"), 3)
 
 	entry({"admin", "services", "deepseek_harness", "help"},
-		call("help"), _("Help"), 99)
+		call("help"), translate("Help"), 99)
 
 	-- ===== JSON API =====
 	entry({"admin", "services", "deepseek_harness", "api", "v1", "status"},
@@ -151,7 +153,7 @@ end
 
 function dashboard()
 	luci.template.render("deepseek_harness/dashboard", {
-		title = _("DeepSeek Harness"),
+		title = translate("DeepSeek Harness"),
 		config = read_uci(),
 		status = shell_status(),
 	})
@@ -159,7 +161,7 @@ end
 
 function help()
 	luci.template.render("deepseek_harness/help", {
-		title = _("Help"),
+		title = translate("Help"),
 	})
 end
 
