@@ -75,8 +75,8 @@ EOF
 mkdir -p "$ROOT/dist"
 OUT="$ROOT/dist/${PKG_NAME}_${VERSION}-${RELEASE}_all.ipk"
 cd "$STAGING"
-tar -czf "$STAGING/control.tar.gz" -C "$STAGING/CONTROL" .
-tar -czf "$STAGING/data.tar.gz" -C "$STAGING/data" .
+tar -czf "$STAGING/control.tar.gz" -C "$STAGING/CONTROL" . --mtime='@0'
+tar -czf "$STAGING/data.tar.gz" -C "$STAGING/data" . --mtime='@0'
 echo "2.0" > "$STAGING/debian-binary"
 
 # 用 Python ar 打包器(替代 tar -cf)
