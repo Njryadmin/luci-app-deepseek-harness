@@ -8,6 +8,18 @@
 #   默认 version=1.0.0 release=alpha.1
 #
 # 输出:dist/luci-app-deepseek-harness_<version>-<release>_all.ipk
+#
+# .ipk 实际是 tar+gzip 压缩的 tar 归档(不是 ar!)
+# 结构(参考 OpenWrt 官方 scripts/ipkg-build):
+#   .ipk (gzip)
+#     ├─ ./debian-binary   ("2.0\n")
+#     ├─ ./control.tar.gz  (gzip)
+#     │    ├─ ./control
+#     │    └─ ./conffiles
+#     └─ ./data.tar.gz     (gzip)
+#          ├─ ./usr/...
+#          ├─ ./etc/...
+#          └─ ...
 
 set -eu
 
@@ -26,9 +38,7 @@ for cmd in tar find gzip; do
 done
 
 # 2. 准备构建目录
-# 用 /tmp 下的固定路径(避开 safe-delete 对 rm -rf 的拦截)
 STAGING="/tmp/dsh-build-staging"
-# 清空旧内容(用 find -delete 代替 rm -rf)
 if [ -d "$STAGING" ]; then
 	find "$STAGING" -mindepth 1 -delete 2>/dev/null || true
 fi
@@ -71,27 +81,30 @@ cat > "$STAGING/CONTROL/conffiles" <<'EOF'
 /etc/config/deepseek_harness
 EOF
 
-# 6. 打包
+# 6. 打包 (OpenWrt 标准:tar+gzip,不是 ar!)
+# 关键:control.tar.gz 和 data.tar.gz 内部 entry 都带 ./ 前缀
 mkdir -p "$ROOT/dist"
 OUT="$ROOT/dist/${PKG_NAME}_${VERSION}-${RELEASE}_all.ipk"
-cd "$STAGING"
-tar -czf "$STAGING/control.tar.gz" -C "$STAGING/CONTROL" . --mtime='@0'
-tar -czf "$STAGING/data.tar.gz" -C "$STAGING/data" . --mtime='@0'
-echo "2.0" > "$STAGING/debian-binary"
 
-# 用 Python ar 打包器(替代 tar -cf)
-# Git Bash / Windows 上 ar 命令不可用,且 GNU tar 不支持 ar 输出格式
-# 路径要转 Windows 格式给 Python,避免 Git Bash 自动转换
-if command -v cygpath >/dev/null 2>&1; then
-	AR_PACK_WIN="$(cygpath -w "$SCRIPT_DIR/ar_pack.py")"
-	OUT_WIN="$(cygpath -w "$OUT")"
-else
-	AR_PACK_WIN="$SCRIPT_DIR/ar_pack.py"
-	OUT_WIN="$OUT"
-fi
-python3 "$AR_PACK_WIN" "$OUT_WIN" \
-	debian-binary control.tar.gz data.tar.gz
+# 6a. control.tar.gz:在 CONTROL 目录里 tar -cf - . | gzip
+( cd "$STAGING/CONTROL" && tar --format=gnu --numeric-owner --sort=name \
+	-cf - --mtime='@0' . | gzip -n > "$STAGING/control.tar.gz" )
+
+# 6b. data.tar.gz:在 data 目录里 tar -cf - . | gzip
+( cd "$STAGING/data" && tar --format=gnu --numeric-owner --sort=name \
+	-cf - --mtime='@0' . | gzip -n > "$STAGING/data.tar.gz" )
+
+# 6c. debian-binary
+printf "2.0\n" > "$STAGING/debian-binary"
+
+# 6d. 整体:tar -cf - ./debian-binary ./control.tar.gz ./data.tar.gz | gzip > out.ipk
+( cd "$STAGING" && tar --format=gnu --numeric-owner --sort=name \
+	-cf - --mtime='@0' \
+	./debian-binary ./control.tar.gz ./data.tar.gz \
+	| gzip -n > "$OUT" )
 
 # 清理
 find "$STAGING" -mindepth 1 -delete 2>/dev/null || true
-# ar_pack.py 已经 echo OK 和 Size,这里不再重复
+
+echo "OK: $OUT"
+echo "Size: $(stat -c %s "$OUT" 2>/dev/null || stat -f %z "$OUT") bytes"
